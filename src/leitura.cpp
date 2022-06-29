@@ -111,11 +111,12 @@ void leHandover(Graph *graph, string &input_file_name)
     int matrix_size = matrix.size();
     for (int k = 0; k < matrix_size; k++)
     {
-        if (stoi(matrix[k]) != 0)
+
+        int edge_weight = stoi(matrix[k]);
+        int source_id = k / order;
+        int target_id = k % order;
+        if (source_id < target_id)
         {
-            int edge_weight = stoi(matrix[k]);
-            int source_id = k / order;
-            int target_id = k % order;
             float source_weight = graph->getNode(source_id)->getWeight();
             float target_weight = graph->getNode(target_id)->getWeight();
 

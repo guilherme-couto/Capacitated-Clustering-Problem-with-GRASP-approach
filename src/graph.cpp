@@ -303,6 +303,14 @@ void Graph::printBestSolution()
     cout << "}" << endl;
 }
 
+float Graph::totalClustersLoads()
+{
+    float sum = 0.0;
+    for (int k = 0; k < this->clusters.size(); k++)
+        sum += this->clusters[k].getLoad() * 1.0;
+    return sum;
+}
+
 // Metaheuristic methods
 void Graph::greedyRandom()
 {
@@ -317,10 +325,8 @@ void Graph::greedyRandom()
         do
         {
             random_number = rand.next() % this->order; // gera um inteiro entre 0 e order-1
-            // cout << k << ": random_id " << random_id << endl;
             node = this->getNode(random_number);
         } while (node->getAssigned());
-
         // insere o nó no cluster i e marca ele como inserido
         if (!node->getAssigned())
         {
@@ -333,7 +339,7 @@ void Graph::greedyRandom()
     vector<pair<float, pair<int, int>>> candidate_list; // {valor do incremento, {node_id=i, cluster_id=k}}
     candidate_list.clear();
     float max_increment = -INF;
-    // this->generateCL(candidate_list, max_increment);
+
     for (int k = 0; k < this->clusters.size(); k++)
     {
         node = this->first_node;
@@ -358,26 +364,58 @@ void Graph::greedyRandom()
     // 3a parte: montar uma lista restrita de candidatos para cada cluster e acrescentar nós até atingir o limite inferior de cada cluster
     float alfa = 0.6; // valor encontrado na literatura
     float increment_percentage = alfa * max_increment;
-
     for (int k = 0; k < this->clusters.size(); k++)
     {
         vector<int> rcl; // restricted candidate list
         rcl.clear();
+        vector<pair<float, int>> cluster_cl; // cl sem restrição de increment % {increment, node_id}
+        cluster_cl.clear();
         for (int c = 0; c < candidate_list.size(); c++)
         {
             if (candidate_list[c].second.second == k)
-                if (candidate_list[c].first >= increment_percentage)
-                    rcl.push_back(candidate_list[c].second.first); // adiciona o id do nó na rcl
+            {                                                        // candidate_list[c].second.second = cluster_id=k
+                if (candidate_list[c].first >= increment_percentage) // candidate_list[c].first = valor do incremento
+                    rcl.push_back(candidate_list[c].second.first);   // adiciona o id do nó na rcl
+                cluster_cl.push_back({candidate_list[c].first, candidate_list[c].second.first});
+            }
         }
-        // acrescenta aleatoriamente nós da rcl no cluster k até o limite inferior ser atingido
-        while (this->clusters[k].getNodesWeight() < this->clusters[k].getLowerBound())
+
+        bool loop_flag = false;
+        if (rcl.size() > 0)
         {
-            random_number = rand.next() % rcl.size(); // gera um inteiro entre 0 e rcl.size
-            node = this->getNode(rcl[random_number]);
-            if (!node->getAssigned())
+            int loop_counter = 0;
+            // acrescenta aleatoriamente nós da rcl no cluster k até o limite inferior ser atingido
+            while (this->clusters[k].getNodesWeight() < this->clusters[k].getLowerBound())
             {
-                this->clusters[k].insertNode(node);
-                node->setAssigned(true);
+                if (loop_counter > rcl.size() * rcl.size()) // preso em um loop. atrasando a execução
+                {
+                    loop_flag = true;
+                    break;
+                }
+
+                random_number = rand.next() % rcl.size(); // gera um inteiro entre 0 e rcl.size
+                node = this->getNode(rcl[random_number]);
+                if (!node->getAssigned())
+                {
+                    this->clusters[k].insertNode(node);
+                    node->setAssigned(true);
+                }
+                loop_counter++;
+            }
+        }
+        if (rcl.size() <= 0 || loop_flag == true) // caso não tenha sido possível construir uma rcl com o valor de increment_percentage
+        {
+            sort(cluster_cl.rbegin(), cluster_cl.rend()); // ordena do maior para o menor incremento
+            int index = 0;
+            while (this->clusters[k].getNodesWeight() < this->clusters[k].getLowerBound())
+            {
+                node = this->getNode(cluster_cl[index].second); // pega o id do node com maior incremento
+                if (!node->getAssigned())
+                {
+                    this->clusters[k].insertNode(node);
+                    node->setAssigned(true);
+                }
+                index++; // insere um por um
             }
         }
     }
@@ -407,7 +445,7 @@ void Graph::greedyRandom()
                     if (node->getWeight() + this->clusters[k].getNodesWeight() <= this->clusters[k].getUpperBound())
                     {
                         float I = this->clusters[k].incrementGain(node);
-                        if (I > 0.0) // se retornar 0.0 é pq o nó não tem arestas que o liguem aos demais nós do cluster
+                        if (I >= 0.0) // se retornar 0.0 é pq o nó não tem arestas que o liguem aos demais nós do cluster ou a aresta vale 0
                         {
                             new_cl.push_back({I, {node->getId(), k}});
                             if (I > max_increment)
@@ -423,15 +461,21 @@ void Graph::greedyRandom()
         long seconds = this->end.tv_sec - this->begin.tv_sec;
         if (seconds > 60)
             return;
-
+            
         // 5a parte: montar uma restricted candidate list new_rcl a partir da new_cl
         vector<pair<int, int>> new_rcl; // pair = {node_id, cluster_id}
         new_rcl.clear();
+        vector<pair<int, int>> alternative_cl; // pair = {node_id, cluster_id}
+        alternative_cl.clear();
         increment_percentage = alfa * max_increment;
 
         for (int c = 0; c < new_cl.size(); c++)
-            if (new_cl[c].first >= increment_percentage)
+        {
+            if (new_cl[c].first > increment_percentage)
                 new_rcl.push_back(new_cl[c].second);
+            else
+                alternative_cl.push_back(new_cl[c].second);
+        }
 
         gettimeofday(&this->end, 0);
         seconds = this->end.tv_sec - this->begin.tv_sec;
@@ -455,15 +499,47 @@ void Graph::greedyRandom()
                 }
             }
         }
-    }
-}
+        else if (alternative_cl.size() > 0) // caso nao tenha sido possível construir a rcl
+        {
+            random_number = rand.next() % alternative_cl.size(); // gera um inteiro entre 0 e new_rcl.size
+            int node_id = alternative_cl[random_number].first;
+            node = this->getNode(node_id);
 
-float Graph::totalClustersLoads()
-{
-    float sum = 0.0;
-    for (int k = 0; k < this->clusters.size(); k++)
-        sum += this->clusters[k].getLoad() * 1.0;
-    return sum;
+            if (!node->getAssigned())
+            {
+                int cluster_id = alternative_cl[random_number].second;
+                if (!node->getAssigned())
+                {
+                    this->clusters[cluster_id].insertNode(node);
+                    node->setAssigned(true);
+                }
+            }
+        }
+        else // caso os nós a serem inseridos extrapolem o bound
+        {
+            node = this->first_node;
+
+            while (node != nullptr)
+            {
+                if (!node->getAssigned())
+                {
+                    float lightest_cluster_weight = this->clusters[0].getNodesWeight();
+                    int lightest_cluster_id = 0;
+                    for (int k = 1; k < this->clusters.size(); k++) // procura o cluster mais leve
+                    {
+                        if (this->clusters[k].getNodesWeight() < lightest_cluster_weight)
+                        {
+                            lightest_cluster_weight = this->clusters[k].getNodesWeight();
+                            lightest_cluster_id = k;
+                        }
+                    }
+                    this->clusters[lightest_cluster_id].insertNode(node);
+                    node->setAssigned(true);
+                }
+                node = node->getNextNode();
+            }
+        }
+    }
 }
 
 float Graph::insertionMvmt()
@@ -707,9 +783,11 @@ void Graph::GRASP()
 
     // first phase - greedy construction
     this->greedyRandom();
+    /*
     cout << "GREEDY DONE" << endl;
     this->printClusters();
     this->printBestSolution();
+    */
 
     gettimeofday(&this->end, 0);
     long seconds = this->end.tv_sec - this->begin.tv_sec;
@@ -718,11 +796,12 @@ void Graph::GRASP()
 
     // second phase - local search
     this->localSearch();
-    this->printClusters();
-    this->printBestSolution();
 
     gettimeofday(&this->end, 0);
     seconds = this->end.tv_sec - this->begin.tv_sec;
     if (seconds > this->timeLimit)
         cout << "Time's up (" << seconds << " seconds)" << endl;
+    
+    this->printClusters();
+    this->printBestSolution();
 }
